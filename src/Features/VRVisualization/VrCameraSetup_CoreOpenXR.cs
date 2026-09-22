@@ -72,31 +72,78 @@ namespace UnityVRMod.Features.VrVisualization
                 if (!OpenXRAPI.InitializeCoreFunctions(OpenXRNativeLoader.xrGetInstanceProcAddr_ptr_delegate))
                     throw new Exception("Failed to initialize core OpenXR functions.");
 
-                var appInfo = new XrApplicationInfo
-                {
-                    applicationName = "UnityVRMod",
-                    applicationVersion = 1,
-                    engineName = "Unity",
-                    engineVersion = 1,
-                    apiVersion = OpenXRConstants.XR_API_VERSION_1_1
-                };
-
                 string[] requestedExtensions = [OpenXRConstants.XR_KHR_D3D11_ENABLE_EXTENSION_NAME];
                 IntPtr pRequestedExtensions = MarshallStringUtils.MarshalStringArrayToAnsi(requestedExtensions);
 
-                var instanceCreateInfo = new XrInstanceCreateInfo
+                try
                 {
-                    type = XrStructureType.XR_TYPE_INSTANCE_CREATE_INFO,
-                    applicationInfo = appInfo,
-                    enabledExtensionCount = (uint)requestedExtensions.Length,
-                    enabledExtensionNames = pRequestedExtensions
-                };
+                    // Downward compatibility: try 1.1 first, fall back to 1.0.
+                    // Shipped VDXR (e.g. 1.0.10) only accepts 1.0 and returns
+                    // XR_ERROR_API_VERSION_UNSUPPORTED for 1.1, while newer runtimes
+                    // (VDXR main 1.1.0, SteamVR, Oculus) accept 1.1.
+                    bool instanceCreated = false;
+                    XrResult lastResult = XrResult.XR_SUCCESS;
 
-                OpenXRHelper.CheckResult(OpenXRAPI.xrCreateInstance(in instanceCreateInfo, out _xrInstance), "xrCreateInstance");
-                MarshallStringUtils.FreeMarshalledStringArray(pRequestedExtensions, requestedExtensions.Length);
-                if (_xrInstance == OpenXRConstants.XR_NULL_HANDLE) throw new Exception("xrCreateInstance returned a null handle.");
+                    foreach (ulong apiVersion in OpenXRConstants.PreferredApiVersions)
+                    {
+                        string versionString = OpenXRConstants.ToVersionString(apiVersion);
+                        VRModCore.Log($"Requesting OpenXR instance with API version {versionString} (0x{apiVersion:X16})...");
 
-                VRModCore.Log($"OpenXR Instance created. Handle: {_xrInstance}");
+                        var appInfo = new XrApplicationInfo
+                        {
+                            applicationName = "UnityVRMod",
+                            applicationVersion = 1,
+                            engineName = "Unity",
+                            engineVersion = 1,
+                            apiVersion = apiVersion
+                        };
+
+                        var instanceCreateInfo = new XrInstanceCreateInfo
+                        {
+                            type = XrStructureType.XR_TYPE_INSTANCE_CREATE_INFO,
+                            applicationInfo = appInfo,
+                            enabledExtensionCount = (uint)requestedExtensions.Length,
+                            enabledExtensionNames = pRequestedExtensions
+                        };
+
+                        _xrInstance = OpenXRConstants.XR_NULL_HANDLE;
+                        XrResult result = OpenXRAPI.xrCreateInstance(in instanceCreateInfo, out _xrInstance);
+                        lastResult = result;
+
+                        if (result == XrResult.XR_SUCCESS && _xrInstance != OpenXRConstants.XR_NULL_HANDLE)
+                        {
+                            VRModCore.Log($"OpenXR Instance created with API version {versionString}. Handle: {_xrInstance}");
+                            instanceCreated = true;
+                            break;
+                        }
+
+                        _xrInstance = OpenXRConstants.XR_NULL_HANDLE;
+
+                        if (result == XrResult.XR_ERROR_API_VERSION_UNSUPPORTED)
+                        {
+                            VRModCore.LogWarning($"OpenXR runtime rejected API version {versionString} (XR_ERROR_API_VERSION_UNSUPPORTED). Trying next older version...");
+                            continue;
+                        }
+
+                        // Any other error is fatal - include the attempted version for diagnostics.
+                        OpenXRHelper.CheckResult(result, $"xrCreateInstance (API {versionString})");
+                    }
+
+                    if (!instanceCreated)
+                    {
+                        List<string> triedVersions = new List<string>();
+                        foreach (ulong v in OpenXRConstants.PreferredApiVersions)
+                            triedVersions.Add(OpenXRConstants.ToVersionString(v));
+                        throw new OpenXRException(lastResult,
+                            "xrCreateInstance (all API versions rejected: tried " +
+                            string.Join(", ", triedVersions.ToArray()) +
+                            ". If using Virtual Desktop, ensure VDXR is selected and update the Streamer)");
+                    }
+                }
+                finally
+                {
+                    MarshallStringUtils.FreeMarshalledStringArray(pRequestedExtensions, requestedExtensions.Length);
+                }
 
                 if (!OpenXRAPI.InitializeInstanceFunctions(_xrInstance))
                     throw new Exception("Failed to initialize instance-specific OpenXR functions.");

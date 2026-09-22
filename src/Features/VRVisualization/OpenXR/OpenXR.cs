@@ -126,7 +126,27 @@ namespace UnityVRMod.Features.VRVisualization.OpenXR
         public const int XR_MAX_ENGINE_NAME_SIZE = 128;
         public const int XR_MAX_SYSTEM_NAME_SIZE = 256;
         public const int XR_MAX_EXTENSION_NAME_SIZE = 128;
+        public static ulong XR_API_VERSION_1_0 = (1UL << 48);
         public static ulong XR_API_VERSION_1_1 = (1UL << 48) | (1UL << 32);
+
+        // Preferred order: try newest first, fall back for older runtimes
+        // (e.g. shipped VDXR 1.0.x only accepts 1.0, while main 1.1.0 accepts both).
+        public static readonly ulong[] PreferredApiVersions = [XR_API_VERSION_1_1, XR_API_VERSION_1_0];
+
+        public static ulong XrMakeVersion(uint major, uint minor, uint patch)
+        {
+            return ((ulong)(major & 0xFFFF) << 48) | ((ulong)(minor & 0xFFFF) << 32) | patch;
+        }
+
+        public static uint XrVersionMajor(ulong version) => (uint)(version >> 48);
+        public static uint XrVersionMinor(ulong version) => (uint)((version >> 32) & 0xFFFF);
+        public static uint XrVersionPatch(ulong version) => (uint)(version & 0xFFFFFFFF);
+
+        public static string ToVersionString(ulong version)
+        {
+            return $"{XrVersionMajor(version)}.{XrVersionMinor(version)}.{XrVersionPatch(version)}";
+        }
+
         public const string XR_KHR_D3D11_ENABLE_EXTENSION_NAME = "XR_KHR_D3D11_enable";
     }
     public static class XrBool32 { public const uint XR_FALSE = 0; public const uint XR_TRUE = 1; }
